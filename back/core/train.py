@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import os
-from core.dataset import get_dataloader
+from core.dataset import get_dataloader, BrainTumorKaggleDataset
 from core.model import load_model, save_model
 from torchvision import transforms
 from sklearn.model_selection import train_test_split
@@ -14,28 +14,48 @@ def train_model(data_dir, num_epochs=5, batch_size=32, learning_rate=3e-4, num_s
     print(f"Using device: {device}")
 
     # Define transformations
-    transform = transforms.Compose([
-        transforms.Resize((224, 224)),
+    train_transform = transforms.Compose([
+        transforms.RandomResizedCrop(224, scale=(0.85, 1.0)),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.RandomRotation(degrees=5),
+        transforms.ColorJitter(brightness=0.1, contrast=0.1),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ])
+    val_transform = transforms.Compose([
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
 
     # Load dataset and model
     # Build dataset once, then split indices into train/val
-    full_loader = get_dataloader(data_dir, transform, batch_size=1, shuffle=False)
-    num_samples = len(full_loader.dataset)
+    full_dataset_for_split = BrainTumorKaggleDataset(data_dir=data_dir, transform=val_transform)
+    num_samples = len(full_dataset_for_split)
     indices = list(range(num_samples))
     train_idx, val_idx = train_test_split(indices, test_size=0.15, shuffle=True, random_state=42)
 
-    train_subset = Subset(full_loader.dataset, train_idx)
-    val_subset = Subset(full_loader.dataset, val_idx)
+    train_dataset = BrainTumorKaggleDataset(data_dir=data_dir, transform=train_transform)
+    val_dataset = BrainTumorKaggleDataset(data_dir=data_dir, transform=val_transform)
+    train_subset = Subset(train_dataset, train_idx)
+    val_subset = Subset(val_dataset, val_idx)
 
     train_loader = torch.utils.data.DataLoader(train_subset, batch_size=batch_size, shuffle=True)
     val_loader = torch.utils.data.DataLoader(val_subset, batch_size=batch_size, shuffle=False)
     model = load_model(num_classes=4, device=device)
 
     # Define loss and optimizer
-    criterion = nn.CrossEntropyLoss()
+    # Compute class weights to handle imbalance
+    with torch.no_grad():
+        label_list = []
+        for i in train_idx:
+            _, y = train_dataset[i]
+            label_list.append(int(y))
+        counts = torch.bincount(torch.tensor(label_list), minlength=4).float()
+        weights = (counts.sum() / (counts + 1e-6))
+        weights = weights / weights.mean()
+    criterion = nn.CrossEntropyLoss(weight=weights.to(device))
     optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
 

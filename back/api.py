@@ -4,6 +4,17 @@ from fastapi.responses import JSONResponse
 import torch
 from PIL import Image
 from torchvision import transforms
+import os
+try:
+    import pydicom
+    _HAS_PYDICOM = True
+except Exception:
+    _HAS_PYDICOM = False
+try:
+    import nibabel as nib
+    _HAS_NIB = True
+except Exception:
+    _HAS_NIB = False
 import io
 import base64
 import numpy as np
@@ -29,6 +40,7 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 model = None
 xai_manager = None
 classes = ['no_tumor', 'glioma', 'meningioma', 'pituitary']
+CONF_THRESHOLD = 0.55
 
 @app.on_event("startup")
 async def startup_event():
@@ -43,8 +55,51 @@ async def startup_event():
         print(f"Warning: Could not load model - {e}")
         print("Using dummy mode for development")
 
-def process_image(file_bytes):
-    image = Image.open(io.BytesIO(file_bytes)).convert('RGB')
+@app.get("/health")
+async def health():
+    return {
+        "status": "running",
+        "device": device,
+        "model_loaded": model is not None,
+        "model_path": 'back/models/brain_tumor_model.pth',
+        "shap_available": getattr(xai_manager, 'model', None) is not None
+    }
+
+def _load_image_any(file_bytes: bytes, filename: str):
+    name = (filename or '').lower()
+    if name.endswith('.dcm'):
+        if not _HAS_PYDICOM:
+            raise RuntimeError("pydicom not installed to handle .dcm")
+        ds = pydicom.dcmread(io.BytesIO(file_bytes))
+        arr = ds.pixel_array
+        if arr.ndim == 2:
+            img = Image.fromarray(arr).convert('RGB')
+        else:
+            img = Image.fromarray(arr[..., 0]).convert('RGB')
+        return img
+    if name.endswith('.nii') or name.endswith('.nii.gz'):
+        if not _HAS_NIB:
+            raise RuntimeError("nibabel not installed to handle .nii/.nii.gz")
+        f = io.BytesIO(file_bytes)
+        img_nii = nib.load(f)
+        data = img_nii.get_fdata()
+        # take central slice
+        axis = 2 if data.ndim >= 3 else 0
+        idx = data.shape[axis] // 2
+        if axis == 2:
+            sl = data[:, :, idx]
+        elif axis == 1:
+            sl = data[:, idx, :]
+        else:
+            sl = data[idx, :, :]
+        sl = sl - sl.min()
+        sl = (sl / (sl.max() + 1e-8) * 255).astype('uint8')
+        return Image.fromarray(sl).convert('RGB')
+    # default: common image
+    return Image.open(io.BytesIO(file_bytes)).convert('RGB')
+
+def process_image(file_bytes, filename: str = ""):
+    image = _load_image_any(file_bytes, filename)
     # Robust center-crop + resize to reduce aspect-ratio artifacts
     aug = transforms.Compose([
         transforms.Resize(256),
@@ -77,10 +132,18 @@ async def predict(file: UploadFile = File(...), method: str = Form("gradcam")):
             )
         
         contents = await file.read()
-        img_tensor, original_image = process_image(contents)
+        img_tensor, original_image = process_image(contents, file.filename)
         
+        # TTA: average over simple flips
+        def forward_tta(x):
+            outs = []
+            with torch.no_grad():
+                outs.append(model(x))
+                outs.append(model(torch.flip(x, dims=[-1])))
+            return torch.mean(torch.stack(outs, dim=0), dim=0)
+
         with torch.no_grad():
-            output = model(img_tensor)
+            output = forward_tta(img_tensor)
             probabilities = torch.softmax(output, dim=1)[0]
             predicted_class_idx = output.argmax(dim=1).item()
             predicted_class = classes[predicted_class_idx]
@@ -88,11 +151,14 @@ async def predict(file: UploadFile = File(...), method: str = Form("gradcam")):
         
         probs_dict = {classes[i]: probabilities[i].item() for i in range(len(classes))}
         
-        return {
+        resp = {
             "predicted_class": predicted_class,
             "confidence": confidence,
             "probabilities": probs_dict,
         }
+        if confidence < CONF_THRESHOLD:
+            resp["note"] = "Low confidence prediction. Please review."
+        return resp
     
     except Exception as e:
         return JSONResponse(
