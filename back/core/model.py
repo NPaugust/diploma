@@ -2,11 +2,6 @@ import torch
 import torch.nn as nn
 from torchvision import models
 
-def load_model(num_classes=4, device='cuda' if torch.cuda.is_available() else 'cpu'):
-    model = BrainTumorModel(num_classes)
-    model.to(device)
-    return model
-
 class BrainTumorModel(nn.Module):
     def __init__(self, num_classes=4, pretrained=True):
         super(BrainTumorModel, self).__init__()

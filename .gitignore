@@ -1,20 +1,32 @@
+# Python virtual environments
 .venv/
 venv/
 .venv311/
 env/
 ENV/
+back/.venv/
+back/venv/
 
-# Python
+# Python cache
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.log
 .Python
 
 models/*.pth
 models/*.pkl
+back/models/*.pth
+back/models/*.pt
+back/models/*.ckpt
+back/models/*.onnx
+back/models/*.npz
+back/models/*.pkl
 data/raw/*
 data/processed/*
+back/data/**
+!back/data/**/.gitkeep
 
 # Jupyter
 .ipynb_checkpoints/
@@ -22,3 +34,9 @@ data/processed/*
 # IDE
 .vscode/
 .idea/
+
+# Frontend
+front/node_modules/
+front/dist/
+front/.env
+front/.env.local

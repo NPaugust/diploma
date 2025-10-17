@@ -1,0 +1,62 @@
+HOW TO RUN THE PROJECT
+======================
+
+STEP 1: Start Backend
+---------------------
+cd back
+.venv\Scripts\activate
+python api.py
+
+Backend runs on: http://localhost:8000
+
+
+STEP 2: Start Frontend (new terminal)
+--------------------------------------
+cd front
+npm run dev
+
+Frontend runs on: http://localhost:3000
+
+
+USAGE GUIDE:
+------------
+1. Open http://localhost:3000 in browser
+2. LEFT SIDE: Upload MRI brain scan (drag & drop or click)
+3. LEFT SIDE: Select XAI method (Grad-CAM, SHAP, LIME)
+4. Click "Analyze Image" button (blue button with play icon)
+5. RIGHT SIDE: View results & XAI explanation
+
+LAYOUT:
+-------
+- No scroll needed - everything fits on one screen
+- Left: Upload & method selector (compact)
+- Right: Results & explanation visualization
+- Top: Compact header with project info
+
+
+FEATURES:
+---------
+- Single-screen layout (no scrolling)
+- Real-time classification
+- 3 XAI methods: Grad-CAM, SHAP, LIME
+- 4 tumor types: No Tumor, Glioma, Meningioma, Pituitary
+- Visual heatmaps showing model attention
+
+
+TROUBLESHOOTING:
+----------------
+- "Model not loaded": Train first with `cd back && python -m core.train`
+- No connection: Ensure backend is on port 8000
+- No results: Click "Analyze Image" button after upload
+
+
+PROJECT STRUCTURE:
+------------------
+back/       - Backend (FastAPI + PyTorch + XAI)
+  core/     - ML modules (model, dataset, xai, train)
+  api.py    - FastAPI server
+front/      - Frontend (React + Vite + TailwindCSS)
+  src/      - Components, store, API client
+models/     - Trained models (.pth files)
+data/       - Dataset (raw & processed)
+

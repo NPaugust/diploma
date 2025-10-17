@@ -3,8 +3,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 from captum.attr import LayerGradCam
 from captum.attr import visualization as viz
-import shap
-from skimage.segmentation import slic
+try:
+    import shap  # optional, used only when SHAP method is requested
+    _HAS_SHAP = True
+except Exception:
+    shap = None
+    _HAS_SHAP = False
 
 class XAIManager:
     def __init__(self, model, device='cuda' if torch.cuda.is_available() else 'cpu'):
@@ -24,19 +28,17 @@ class XAIManager:
         attributions = grad_cam.attribute(input_tensor, target=target_class)
         return attributions
 
-    def shap_explain(self, input_tensor, max_evals=500, batch_size=50):
-        # SHAP for explanation of predictions
-        def model_wrapper(x):
-            x = torch.tensor(x).permute(0, 3, 1, 2).float() / 255.0
-            x = x.to(self.device)
-            with torch.no_grad():
-                output = self.model(x)
-                return output.cpu().numpy()
-
-        # Use SLIC for segmentation
-        segments = slic(input_tensor.squeeze().cpu().numpy(), n_segments=50, compactness=10)
-        explainer = shap.explainers.Partition(segments, model_wrapper, max_evals=max_evals)
-        shap_values = explainer(input_tensor.squeeze().cpu().numpy())
+    def shap_explain(self, input_tensor, num_samples=50):
+        # SHAP for explanation of predictions using DeepExplainer
+        if not _HAS_SHAP:
+            raise ImportError("SHAP is not installed. Please install 'shap' to use this method.")
+        # Create background data (random noise)
+        background = torch.randn(num_samples, 3, 224, 224).to(self.device)
+        
+        # Use DeepExplainer which works better with PyTorch models
+        explainer = shap.DeepExplainer(self.model, background)
+        shap_values = explainer.shap_values(input_tensor)
+        
         return shap_values
 
     def visualize_explanations(self, original_image, attributions, method='gradcam'):
