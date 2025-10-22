@@ -1,2 +1,2 @@
-# Пустой файл для инициализации пакета src
+# Empty file to initialize core package
 

@@ -30,5 +30,10 @@ export const getXAIExplanation = async (file, method = 'gradcam', predictedClass
   return response.data
 }
 
+export const getHealthStatus = async () => {
+  const response = await api.get('/health')
+  return response.data
+}
+
 export default api
 

@@ -9,9 +9,26 @@ body {
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background: linear-gradient(135deg, #1e3a8a 0%, #7c3aed 50%, #ec4899 100%);
-  background-attachment: fixed;
+  background: #ffffff;
   min-height: 100vh;
+  color: #1f2937;
+}
+
+/* Custom text colors for better visibility */
+.text-primary-dark {
+  color: #1e40af;
+}
+
+.text-secondary-dark {
+  color: #374151;
+}
+
+.text-accent-dark {
+  color: #4b5563;
+}
+
+.text-muted-dark {
+  color: #6b7280;
 }
 
 code {
@@ -20,33 +37,50 @@ code {
 }
 
 @layer utilities {
-  .glass {
-    background: rgba(255, 255, 255, 0.1);
-    backdrop-filter: blur(16px);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+  .card {
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    transition: all 0.3s ease;
   }
   
-  .glass-dark {
-    background: rgba(15, 23, 42, 0.7);
-    backdrop-filter: blur(16px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
+  .card-dark {
+    background: #f9fafb;
+    border: 1px solid #d1d5db;
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
   }
 
-  .animate-gradient {
-    animation: gradient 15s ease infinite;
-    background-size: 200% 200%;
+  .card-hover {
+    background: #ffffff;
+    border: 1px solid #d1d5db;
+    box-shadow: 0 8px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+    transition: all 0.3s ease;
+  }
+
+  .card-hover:hover {
+    border-color: #3b82f6;
+    transform: translateY(-2px);
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  }
+
+  .upload-area {
+    background: #f8fafc;
+    border: 2px dashed #cbd5e1;
+    transition: all 0.3s ease;
+  }
+
+  .upload-area:hover {
+    border-color: #3b82f6;
+    background: #eff6ff;
+  }
+
+  .upload-area.drag-active {
+    border-color: #3b82f6;
+    background: #dbeafe;
   }
 
   .animate-fadeIn {
     animation: fadeIn 0.6s ease-in-out;
-  }
-
-  @keyframes gradient {
-    0% { background-position: 0% 50%; }
-    50% { background-position: 100% 50%; }
-    100% { background-position: 0% 50%; }
   }
 
   @keyframes fadeIn {
@@ -60,4 +94,3 @@ code {
     }
   }
 }
-

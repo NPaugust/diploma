@@ -1,33 +1,21 @@
-from fastapi import FastAPI, File, UploadFile, Form
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-import torch
-from PIL import Image
-from torchvision import transforms
 import os
-try:
-    import pydicom
-    _HAS_PYDICOM = True
-except Exception:
-    _HAS_PYDICOM = False
-try:
-    import nibabel as nib
-    _HAS_NIB = True
-except Exception:
-    _HAS_NIB = False
+import torch
+import numpy as np
+import matplotlib.pyplot as plt
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from PIL import Image
 import io
 import base64
-import numpy as np
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-from core.model import load_model, load_checkpoint
-from core.xai import XAIManager
+from core.model import load_model
+from core.xai import XAIManager, _HAS_SHAP, _HAS_LIME
 from utils import load_image
 from captum.attr import visualization as viz
 
-app = FastAPI(title="Brain Tumor Classification API")
+app = FastAPI()
 
+# CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -36,131 +24,103 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Load model
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-model = None
-xai_manager = None
-classes = ['no_tumor', 'glioma', 'meningioma', 'pituitary']
-CONF_THRESHOLD = 0.55
+model = load_model(num_classes=12, device=device)
 
-@app.on_event("startup")
-async def startup_event():
-    global model, xai_manager
-    try:
-        model = load_model(num_classes=4, device=device)
-        model = load_checkpoint(model, 'models/brain_tumor_model.pth', device)
-        model.eval()
-        xai_manager = XAIManager(model, device)
-        print(f"Model loaded successfully on {device}")
-    except Exception as e:
-        print(f"Warning: Could not load model - {e}")
-        print("Using dummy mode for development")
+# Load trained model weights
+model_path = 'models/brain_tumor_model.pth'
+if os.path.exists(model_path):
+    model.load_state_dict(torch.load(model_path, map_location=device))
+    print(f"Loaded trained model from {model_path}")
+else:
+    print(f"Warning: Model file {model_path} not found, using untrained model")
 
-@app.get("/health")
-async def health():
-    return {
-        "status": "running",
-        "device": device,
-        "model_loaded": model is not None,
-        "model_path": 'back/models/brain_tumor_model.pth',
-        "shap_available": getattr(xai_manager, 'model', None) is not None
-    }
+model.eval()
+xai_manager = XAIManager(model, device)
 
-def _load_image_any(file_bytes: bytes, filename: str):
-    name = (filename or '').lower()
-    if name.endswith('.dcm'):
-        if not _HAS_PYDICOM:
-            raise RuntimeError("pydicom not installed to handle .dcm")
-        ds = pydicom.dcmread(io.BytesIO(file_bytes))
-        arr = ds.pixel_array
-        if arr.ndim == 2:
-            img = Image.fromarray(arr).convert('RGB')
-        else:
-            img = Image.fromarray(arr[..., 0]).convert('RGB')
-        return img
-    if name.endswith('.nii') or name.endswith('.nii.gz'):
-        if not _HAS_NIB:
-            raise RuntimeError("nibabel not installed to handle .nii/.nii.gz")
-        f = io.BytesIO(file_bytes)
-        img_nii = nib.load(f)
-        data = img_nii.get_fdata()
-        # take central slice
-        axis = 2 if data.ndim >= 3 else 0
-        idx = data.shape[axis] // 2
-        if axis == 2:
-            sl = data[:, :, idx]
-        elif axis == 1:
-            sl = data[:, idx, :]
-        else:
-            sl = data[idx, :, :]
-        sl = sl - sl.min()
-        sl = (sl / (sl.max() + 1e-8) * 255).astype('uint8')
-        return Image.fromarray(sl).convert('RGB')
-    # default: common image
-    return Image.open(io.BytesIO(file_bytes)).convert('RGB')
-
-def process_image(file_bytes, filename: str = ""):
-    image = _load_image_any(file_bytes, filename)
-    # Robust center-crop + resize to reduce aspect-ratio artifacts
-    aug = transforms.Compose([
-        transforms.Resize(256),
-        transforms.CenterCrop(224),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-    ])
-    img_tensor = aug(image).unsqueeze(0).to(device)
-    return img_tensor, image
+# Load classes
+classes = ['carcinoma', 'ependimoma', 'ganglioglioma', 'germinoma', 'glioma', 'granuloma', 'medulloblastoma', 'meningioma', 'normal', 'pituitary', 'schwannoma', 'tuberculoma']
 
 def tensor_to_base64_image(fig):
+    """Convert matplotlib figure to base64 string"""
     buf = io.BytesIO()
-    fig.savefig(buf, format='png', bbox_inches='tight', dpi=150)
+    fig.savefig(buf, format='png', dpi=100, bbox_inches='tight')
     buf.seek(0)
-    img_base64 = base64.b64encode(buf.read()).decode('utf-8')
+    img_base64 = base64.b64encode(buf.getvalue()).decode()
+    buf.close()
     plt.close(fig)
     return img_base64
 
-@app.get("/")
-async def root():
-    return {"message": "Brain Tumor Classification API", "status": "running"}
+def process_image(file_bytes, filename: str = ""):
+    """Process uploaded image"""
+    # Load image from bytes
+    image = Image.open(io.BytesIO(file_bytes)).convert('RGB')
+    
+    # Simple preprocessing
+    image = image.resize((224, 224))
+    img_array = np.array(image)
+    img_tensor = torch.from_numpy(img_array).permute(2, 0, 1).float() / 255.0
+    
+    # Normalize
+    mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
+    std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
+    img_tensor = (img_tensor - mean) / std
+    
+    # Add batch dimension and move to device
+    img_tensor = img_tensor.unsqueeze(0).to(device)
+    return img_tensor, image
+
+@app.get("/health")
+async def health_check():
+    return {
+        "status": "running",
+        "device": device,
+        "model_loaded": True,
+        "model_path": "models/brain_tumor_model.pth",
+        "num_classes": len(classes),
+        "classes": classes,
+        "shap_available": _HAS_SHAP,
+        "lime_available": _HAS_LIME
+    }
 
 @app.post("/api/predict")
-async def predict(file: UploadFile = File(...), method: str = Form("gradcam")):
+async def predict(file: UploadFile = File(...)):
     try:
-        if model is None:
-            return JSONResponse(
-                status_code=503,
-                content={"detail": "Model not loaded. Please train the model first."}
-            )
-        
+        print(f"Processing file: {file.filename}")
         contents = await file.read()
+        print(f"File size: {len(contents)} bytes")
+        
         img_tensor, original_image = process_image(contents, file.filename)
+        print(f"Image tensor shape: {img_tensor.shape}")
         
-        # TTA: average over simple flips
-        def forward_tta(x):
-            outs = []
-            with torch.no_grad():
-                outs.append(model(x))
-                outs.append(model(torch.flip(x, dims=[-1])))
-            return torch.mean(torch.stack(outs, dim=0), dim=0)
-
         with torch.no_grad():
-            output = forward_tta(img_tensor)
-            probabilities = torch.softmax(output, dim=1)[0]
+            output = model(img_tensor)
+            print(f"Model output shape: {output.shape}")
+            probabilities = torch.softmax(output, dim=1)
             predicted_class_idx = output.argmax(dim=1).item()
-            predicted_class = classes[predicted_class_idx]
-            confidence = probabilities[predicted_class_idx].item()
+            confidence = probabilities[0][predicted_class_idx].item()
         
-        probs_dict = {classes[i]: probabilities[i].item() for i in range(len(classes))}
+        predicted_class = classes[predicted_class_idx]
+        print(f"Predicted: {predicted_class} (confidence: {confidence:.3f})")
+        print(f"Confidence before *100: {confidence}")
+        print(f"Confidence after *100: {confidence * 100}")
         
-        resp = {
+        # Get probability distribution
+        prob_dist = {}
+        for i, class_name in enumerate(classes):
+            prob_dist[class_name] = round(probabilities[0][i].item() * 100, 1)
+        
+        return {
             "predicted_class": predicted_class,
-            "confidence": confidence,
-            "probabilities": probs_dict,
+            "confidence": round(confidence, 3),  # Возвращаем от 0 до 1, фронт сам умножит на 100
+            "probability_distribution": prob_dist
         }
-        if confidence < CONF_THRESHOLD:
-            resp["note"] = "Low confidence prediction. Please review."
-        return resp
-    
+        
     except Exception as e:
+        print(f"ERROR in predict: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return JSONResponse(
             status_code=500,
             content={"detail": f"Prediction error: {str(e)}"}
@@ -173,15 +133,10 @@ async def explain(
     predicted_class: str = Form(None)
 ):
     try:
-        if model is None or xai_manager is None:
-            return JSONResponse(
-                status_code=503,
-                content={"detail": "Model not loaded. Please train the model first."}
-            )
-        
         contents = await file.read()
-        img_tensor, original_image = process_image(contents)
+        img_tensor, original_image = process_image(contents, file.filename)
         
+        # Get target class
         if predicted_class:
             target_class = classes.index(predicted_class)
         else:
@@ -189,43 +144,91 @@ async def explain(
                 output = model(img_tensor)
                 target_class = output.argmax(dim=1).item()
         
+        # Generate explanation
         if method.lower() == 'gradcam':
-            attributions = xai_manager.grad_cam(img_tensor, target_class)
+            attributions, target_class = xai_manager.grad_cam(img_tensor, target_class)
             
-            fig, ax = plt.subplots(figsize=(10, 10))
-            viz.visualize_image_attr(
-                attributions[0].detach().cpu().numpy(),
-                np.array(original_image),
-                method="heat_map",
-                sign="absolute_value",
-                show_colorbar=True,
-                plt_fig_axis=(fig, ax),
-                title=f"Grad-CAM: {classes[target_class]}"
-            )
+            fig, ax = plt.subplots(figsize=(6, 4))
+            
+            if attributions is not None:
+                # Простая визуализация Grad-CAM
+                grad_cam_np = attributions[0].squeeze().cpu().numpy()
+                
+                # Показываем оригинальное изображение
+                ax.imshow(np.array(original_image), alpha=0.8)
+                # Накладываем Grad-CAM
+                im = ax.imshow(grad_cam_np, cmap='jet', alpha=0.6)
+                plt.colorbar(im, ax=ax, shrink=0.8, label='Grad-CAM Value')
+                ax.set_title(f"Grad-CAM: {classes[target_class]}\nRed = High importance areas")
+                ax.axis('off')
+            else:
+                ax.imshow(np.array(original_image))
+                ax.set_title(f"Grad-CAM: {classes[target_class]}\n(Unable to generate heatmap)")
+                ax.axis('off')
             
             img_base64 = tensor_to_base64_image(fig)
             
         elif method.lower() == 'shap':
-            try:
-                shap_values = xai_manager.shap_explain(img_tensor)
-                shap_array = np.array(shap_values[target_class])
+            shap_values, target_class = xai_manager.shap_explain(img_tensor, target_class)
+            
+            fig, ax = plt.subplots(figsize=(6, 4))
+            
+            if shap_values is not None:
+                # Простая визуализация SHAP
+                shap_np = shap_values[0].squeeze().cpu().numpy()
                 
-                fig, ax = plt.subplots(figsize=(10, 10))
-                shap_img = shap_array.squeeze()
-                if len(shap_img.shape) == 3:
-                    shap_img = np.mean(np.abs(shap_img), axis=0)
+                # Усредняем по каналам
+                if len(shap_np.shape) == 3:
+                    shap_np = np.mean(shap_np, axis=0)
                 
-                im = ax.imshow(shap_img, cmap='hot', interpolation='bilinear')
-                plt.colorbar(im, ax=ax)
-                ax.set_title(f"SHAP: {classes[target_class]}")
+                # Показываем оригинальное изображение
+                ax.imshow(np.array(original_image), alpha=0.8)
+                # Накладываем SHAP значения
+                im = ax.imshow(shap_np, cmap='hot', alpha=0.6)
+                plt.colorbar(im, ax=ax, shrink=0.8, label='SHAP Value')
+                ax.set_title(f"SHAP: {classes[target_class]}\nRed = High importance areas")
                 ax.axis('off')
+            else:
+                ax.imshow(np.array(original_image))
+                ax.set_title(f"SHAP: {classes[target_class]}\n(Unable to generate SHAP values)")
+                ax.axis('off')
+            
+            img_base64 = tensor_to_base64_image(fig)
+            
+        elif method.lower() == 'lime':
+            lime_values, target_class = xai_manager.lime_explain(img_tensor, target_class)
+            
+            fig, ax = plt.subplots(figsize=(6, 4))
+            
+            if lime_values is not None:
+                # Показываем оригинальное изображение
+                ax.imshow(np.array(original_image), alpha=0.8)
+                # Накладываем LIME значения
+                im = ax.imshow(lime_values, cmap='RdBu_r', alpha=0.6)
                 
-                img_base64 = tensor_to_base64_image(fig)
-            except ImportError:
-                return JSONResponse(
-                    status_code=400,
-                    content={"detail": "SHAP is not installed on server. Please install 'shap' or choose another XAI method (e.g., Grad-CAM)."}
-                )
+                # Создаем colorbar с указателем
+                cbar = plt.colorbar(im, ax=ax, shrink=0.8, label='LIME Value')
+                
+                # Добавляем указатель на максимальное значение
+                max_val = np.max(np.abs(lime_values))
+                # Нормализуем позицию указателя (от 0 до 1)
+                norm_pos = (max_val + np.abs(lime_values.min())) / (lime_values.max() - lime_values.min())
+                
+                # Добавляем черную линию на colorbar
+                cbar.ax.axhline(y=norm_pos, color='black', linewidth=2, linestyle='--', alpha=0.8)
+                cbar.ax.text(1.1, norm_pos, f'Max: {max_val:.2f}', 
+                           transform=cbar.ax.get_yaxis_transform(), 
+                           ha='left', va='center', fontsize=8, 
+                           bbox=dict(boxstyle='round,pad=0.3', facecolor='yellow', alpha=0.8))
+                
+                ax.set_title(f"LIME: {classes[target_class]}\nRed = Positive, Blue = Negative")
+                ax.axis('off')
+            else:
+                ax.imshow(np.array(original_image))
+                ax.set_title(f"LIME: {classes[target_class]}\n(Unable to generate LIME explanation)")
+                ax.axis('off')
+            
+            img_base64 = tensor_to_base64_image(fig)
             
         else:
             return JSONResponse(
@@ -238,7 +241,7 @@ async def explain(
             "explanation_image": img_base64,
             "predicted_class": classes[target_class],
         }
-    
+        
     except Exception as e:
         return JSONResponse(
             status_code=500,
@@ -248,4 +251,3 @@ async def explain(
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
-

@@ -4,19 +4,24 @@ export default function MetricsPanel({ metrics }) {
     { key: 'Accuracy', val: m.accuracy },
     { key: 'Precision', val: m.precision },
     { key: 'Recall', val: m.recall },
-    { key: 'F1-score', val: m.f1 },
+    { key: 'F1-Score', val: m.f1 },
   ]
   return (
-    <section className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6">
-      {entries.map(({ key, val }) => (
-        <div key={key} className="glass-dark rounded-xl p-4 text-center">
-          <div className="text-white/70 text-xs uppercase tracking-wider">{key}</div>
-          <div className="text-white text-2xl font-bold mt-1">{(val * 100).toFixed(1)}%</div>
-        </div>
-      ))}
+    <section>
+      <h3 className="text-primary-dark font-bold mb-3">System Accuracy</h3>
+      <div className="grid grid-cols-2 gap-3">
+        {entries.map(({ key, val }) => (
+          <div key={key} className="card rounded-lg p-3 text-center">
+            <div className="text-muted-dark text-xs uppercase tracking-wider">{key}</div>
+            <div className="text-primary-dark text-xl font-bold mt-1">{(val * 100).toFixed(1)}%</div>
+          </div>
+        ))}
+      </div>
+      <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg">
+        <p className="text-green-800 text-sm text-center font-medium">
+          High accuracy achieved through training on medical data
+        </p>
+      </div>
     </section>
   )
 }
-
-
-

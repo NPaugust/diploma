@@ -1,11 +1,14 @@
-import { useState, useCallback, useRef, useEffect } from 'react'
-import { UploadCloud, X, Loader2, Play } from 'lucide-react'
+import { useState, useCallback, useRef, useEffect, useId } from 'react'
+import { UploadCloud, X, Loader2, Play, Image as ImageIcon } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import useAppStore from '../store/useAppStore'
 import { predictImage, getXAIExplanation } from '../api/api'
 
 export default function ImageUpload() {
   const [dragActive, setDragActive] = useState(false)
   const [preview, setPreview] = useState(null)
+  const navigate = useNavigate()
+  const inputId = useId()
   
   const {
     setUploadedImage,
@@ -39,7 +42,6 @@ export default function ImageUpload() {
   }, [selectedMethod])
 
   const handleChange = useCallback((e) => {
-    // prevent form submit/reload in some browsers
     e.preventDefault()
     e.stopPropagation()
     const file = e?.target?.files?.[0]
@@ -59,7 +61,6 @@ export default function ImageUpload() {
       return
     }
 
-    // Use object URL for instant preview (more reliable across browsers)
     if (currentBlobUrlRef.current) {
       URL.revokeObjectURL(currentBlobUrlRef.current)
       currentBlobUrlRef.current = null
@@ -67,11 +68,17 @@ export default function ImageUpload() {
     const objectUrl = URL.createObjectURL(file)
     currentBlobUrlRef.current = objectUrl
     setPreview(objectUrl)
-    // Set state synchronously for UI update
     setUploadedImage(file)
     setPredictionResult(null)
     setXaiResult(null)
     setError(null)
+
+    // Navigate to analysis page immediately after selecting a file
+    try {
+      navigate('/analyze')
+    } catch (_) {
+      // noop
+    }
   }
 
   const handleAnalyze = async () => {
@@ -106,7 +113,6 @@ export default function ImageUpload() {
 
   const { uploadedImage } = useAppStore()
 
-  // Ensure preview persists across layout changes (component remounts)
   useEffect(() => {
     if (!uploadedImage) {
       setPreview(null)
@@ -121,10 +127,8 @@ export default function ImageUpload() {
     <div className="space-y-4">
       {!preview ? (
         <div
-          className={`relative border-2 border-dashed rounded-xl p-8 text-center transition-all ${
-            dragActive
-              ? 'border-blue-400 bg-blue-400/10'
-              : 'border-white/30 hover:border-white/50'
+          className={`relative border-2 border-dashed rounded-2xl p-12 text-center transition-all upload-area ${
+            dragActive ? 'drag-active' : ''
           } ${isLoading ? 'pointer-events-none opacity-50' : ''}`}
           onDragEnter={handleDrag}
           onDragLeave={handleDrag}
@@ -133,29 +137,34 @@ export default function ImageUpload() {
         >
           <input
             type="file"
-            id="file-upload"
-            className="hidden"
+            id={inputId}
+            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-50"
             accept="image/*,.jpg,.jpeg,.png,.webp"
             onChange={handleChange}
             disabled={isLoading}
           />
           
           <label
-            htmlFor="file-upload"
-            className="cursor-pointer flex flex-col items-center space-y-4"
+            htmlFor={inputId}
+            className="flex flex-col items-center space-y-4"
           >
             {isLoading ? (
-              <Loader2 className="w-16 h-16 text-blue-400 animate-spin" />
+              <Loader2 className="w-20 h-20 text-primary-500 animate-spin" />
             ) : (
-              <UploadCloud className="w-16 h-16 text-white/70" />
+              <div className="relative">
+                <UploadCloud className="w-20 h-20 text-primary-500" />
+                <div className="absolute -bottom-2 -right-2 bg-primary-100 rounded-full p-2">
+                  <ImageIcon className="w-6 h-6 text-primary-600" />
+                </div>
+              </div>
             )}
             
             <div>
-              <p className="text-lg font-semibold text-white mb-2">
-                {isLoading ? 'Processing...' : 'Drop your MRI scan here'}
+              <p className="text-xl font-bold text-primary-dark mb-3">
+                {isLoading ? 'Processing...' : 'Upload MRI Brain Scan'}
               </p>
-              <p className="text-white/60 text-sm">
-                or click to browse files • JPG, PNG, JPEG
+              <p className="text-secondary-dark text-base">
+                Drag & drop or click to browse • JPG, PNG, JPEG, WEBP
               </p>
             </div>
           </label>
@@ -165,11 +174,11 @@ export default function ImageUpload() {
           <img
             src={preview}
             alt="Preview"
-            className="w-full rounded-xl shadow-lg"
+            className="w-full rounded-2xl shadow-lg border border-accent-200"
           />
           <button
             onClick={handleRemove}
-            className="absolute top-3 right-3 bg-red-500 hover:bg-red-600 text-white p-2 rounded-full shadow-lg transition-colors"
+            className="absolute top-4 right-4 bg-danger-500 hover:bg-danger-600 text-white p-3 rounded-full shadow-lg transition-all hover:scale-110"
           >
             <X className="w-5 h-5" />
           </button>
@@ -183,15 +192,15 @@ export default function ImageUpload() {
       )}
       
       {uploadedImage && !isLoading && (
-        <button type="button"
+        <button 
+          type="button"
           onClick={handleAnalyze}
-          className="w-full bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-bold py-4 px-6 rounded-xl transition-all shadow-lg hover:shadow-xl transform hover:scale-[1.02] flex items-center justify-center gap-2"
+          className="w-full bg-primary-600 hover:bg-primary-700 text-white font-bold py-4 px-8 rounded-2xl transition-all shadow-lg hover:shadow-xl transform hover:scale-[1.02] flex items-center justify-center gap-3 text-lg"
         >
-          <Play className="w-5 h-5" fill="currentColor" />
+          <Play className="w-6 h-6" fill="currentColor" />
           Start Analysis
         </button>
       )}
     </div>
   )
 }
-
